@@ -7,6 +7,9 @@
 #include "box.h"
 #include "demo.h"
 #include "option_list.h"
+#include <vector>
+#include <opencv2/opencv.hpp>
+#include <yolo_v2_class.hpp>
 
 //"cfg/coco.data"
 
@@ -24,7 +27,7 @@ public:
         int names_size = 0;
         names = get_labels_custom(name_list, &names_size); //get_labels(name_list);
 
-        network net = parse_network_cfg_custom(cfgfile, 1, 1); // set batch=1
+        net = parse_network_cfg_custom(cfgfile, 1, 1); // set batch=1
         if (weightfile) {
             load_weights(&net, weightfile);
         }
@@ -38,12 +41,16 @@ public:
         }
         srand(2222222);
     }
+
     ~ggNetInfo() {
         free_ptrs((void**)names, net.layers[net.n - 1].classes);
+        printf("names freed\n");
         free_list_contents_kvp(options);
+        printf("free_list_contents_kvp freed\n");
         free_list(options);
-
+        printf("options freed\n");
         free_network(net);
+        printf("network freed");
     }
 };
 GGLIBRARY_API ggNetInfo* ggCreateNetwork(char* datacfg = "cfg/coco.data", char* cfgfile = "cfg/yolov3.cfg", char* weightfile = "yolov3.weights",
@@ -59,10 +66,14 @@ GGLIBRARY_API void gFreeNetwork(ggNetInfo* net) {
     delete net;
 }
 
-GGLIBRARY_API void gDetect(ggNetInfo* info, char* input, float thresh = 0.24, float hier_thresh = 0.5f, int letter_box = 0) {
+extern "C" image mat_to_image(cv::Mat mat);
+GGLIBRARY_API void gDetect(ggNetInfo* info, char* imageBuffer, int imgLength, void(*action)(char*), float thresh = 0.24, float hier_thresh = 0.5f, int letter_box = 0) {
     network net = info->net;
     float nms = .45;    // 0.4F
-    image im = load_image(input, 0, 0, net.c);
+    std::vector<char> imageDataVec = std::vector<char>(imageBuffer, imageBuffer + imgLength);
+    cv::Mat imgMat = cv::imdecode(imageDataVec, -1);
+    image im = mat_to_image(imgMat);
+    //image im = load_image(input, 0, 0, net.c);
     image sized;
     if (letter_box) sized = letterbox_image(im, net.w, net.h);
     else sized = resize_image(im, net.w, net.h);
@@ -78,7 +89,7 @@ GGLIBRARY_API void gDetect(ggNetInfo* info, char* input, float thresh = 0.24, fl
     double time = get_time_point();
     network_predict(net, X);
     //network_predict_image(&net, im); letterbox = 1;
-    printf("%s: Predicted in %lf milli-seconds.\n", input, ((double)get_time_point() - time) / 1000);
+    //printf("%s: Predicted in %lf milli-seconds.\n", input, ((double)get_time_point() - time) / 1000);
     //printf("%s: Predicted in %f seconds.\n", input, (what_time_is_it_now()-time));
 
     int nboxes = 0;
@@ -90,8 +101,8 @@ GGLIBRARY_API void gDetect(ggNetInfo* info, char* input, float thresh = 0.24, fl
 
     //if (json_file) {
     long long json_image_id = 0;
-    char * json_buf = detection_to_json(dets, nboxes, l.classes, info->names, json_image_id, input);
-
+    char * json_buf = detection_to_json(dets, nboxes, l.classes, info->names, json_image_id, "");
+    action(json_buf);
     //fwrite(json_buf, sizeof(char), strlen(json_buf), json_file);
     free(json_buf);
     //}
