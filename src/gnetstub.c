@@ -10,33 +10,90 @@
 
 //"cfg/coco.data"
 
-void ggCreateNetwork(char* datacfg = "cfg/coco.data", char* cfgfile = "cfg/yolov3.cfg", char* weightfile = "yolov3.weights", float thresh = 0.24,
+class ggNetInfo {
+public:
+    network net;
+    char** names;
+    list* options;
+    ggNetInfo(char* datacfg = "cfg/coco.data", char* cfgfile = "cfg/yolov3.cfg", char* weightfile = "yolov3.weights",
+        int benchmark_layers = 0) {
+        options = read_data_cfg(datacfg);
+        char* name_list = option_find_str(options, "names", "data/names.list");
+        int names_size = 0;
+        names = get_labels_custom(name_list, &names_size); //get_labels(name_list);
+
+        network net = parse_network_cfg_custom(cfgfile, 1, 1); // set batch=1
+        if (weightfile) {
+            load_weights(&net, weightfile);
+        }
+        net.benchmark_layers = benchmark_layers;
+        fuse_conv_batchnorm(net);
+        calculate_binary_weights(net);
+        if (net.layers[net.n - 1].classes != names_size) {
+            printf("\n Error: in the file %s number of names %d that isn't equal to classes=%d in the file %s \n",
+                name_list, names_size, net.layers[net.n - 1].classes, cfgfile);
+            //if (net.layers[net.n - 1].classes > names_size) getchar();
+        }
+        srand(2222222);
+    }
+    ~ggNetInfo() {
+        free_ptrs((void**)names, net.layers[net.n - 1].classes);
+        free_list_contents_kvp(options);
+        free_list(options);
+
+        free_network(net);
+    }
+};
+ggNetInfo* ggCreateNetwork(char* datacfg = "cfg/coco.data", char* cfgfile = "cfg/yolov3.cfg", char* weightfile = "yolov3.weights",
     int benchmark_layers = 0)
 {
-    list* options = read_data_cfg(datacfg);
-    char* name_list = option_find_str(options, "names", "data/names.list");
-    int names_size = 0;
-    char** names = get_labels_custom(name_list, &names_size); //get_labels(name_list);
-
-    
-    network net = parse_network_cfg_custom(cfgfile, 1, 1); // set batch=1
-    if (weightfile) {
-        load_weights(&net, weightfile);
-    }
-    net.benchmark_layers = benchmark_layers;
-    fuse_conv_batchnorm(net);
-    calculate_binary_weights(net);
-    if (net.layers[net.n - 1].classes != names_size) {
-        printf("\n Error: in the file %s number of names %d that isn't equal to classes=%d in the file %s \n",
-            name_list, names_size, net.layers[net.n - 1].classes, cfgfile);
-        //if (net.layers[net.n - 1].classes > names_size) getchar();
-    }
-    srand(2222222);
-    
-
+    ggNetInfo* info = new ggNetInfo(datacfg, cfgfile, weightfile, benchmark_layers);
+   
     //free_network(net);
+    return info;
 }
 
+void gFreeNetwork(ggNetInfo* net) {
+    delete net;
+}
+
+void gDetect(ggNetInfo* info, char* input, float thresh = 0.24, float hier_thresh = 0.5f, int letter_box = 0) {
+    network net = info->net;
+    float nms = .45;    // 0.4F
+    image im = load_image(input, 0, 0, net.c);
+    image sized;
+    if (letter_box) sized = letterbox_image(im, net.w, net.h);
+    else sized = resize_image(im, net.w, net.h);
+    layer l = net.layers[net.n - 1];
+
+    //box *boxes = calloc(l.w*l.h*l.n, sizeof(box));
+    //float **probs = calloc(l.w*l.h*l.n, sizeof(float*));
+    //for(j = 0; j < l.w*l.h*l.n; ++j) probs[j] = (float*)xcalloc(l.classes, sizeof(float));
+
+    float* X = sized.data;
+
+    //time= what_time_is_it_now();
+    double time = get_time_point();
+    network_predict(net, X);
+    //network_predict_image(&net, im); letterbox = 1;
+    printf("%s: Predicted in %lf milli-seconds.\n", input, ((double)get_time_point() - time) / 1000);
+    //printf("%s: Predicted in %f seconds.\n", input, (what_time_is_it_now()-time));
+
+    int nboxes = 0;
+    detection* dets = get_network_boxes(&net, im.w, im.h, thresh, hier_thresh, 0, 1, &nboxes, letter_box);
+    if (nms) {
+        if (l.nms_kind == DEFAULT_NMS) do_nms_sort(dets, nboxes, l.classes, nms);
+        else diounms_sort(dets, nboxes, l.classes, nms, l.nms_kind, l.beta_nms);
+    }
+
+    //if (json_file) {
+    long long json_image_id = 0;
+    char * json_buf = detection_to_json(dets, nboxes, l.classes, info->names, json_image_id, input);
+
+    //fwrite(json_buf, sizeof(char), strlen(json_buf), json_file);
+    free(json_buf);
+    //}
+}
 
 void test_detector1(char* datacfg = "cfg/coco.data", char* cfgfile = "cfg/yolov3.cfg", char* weightfile = "yolov3.weights", char* filename = NULL, float thresh = 0.24,
     float hier_thresh = 0.5f, int dont_show = 0, int ext_output = 0, int save_labels = 0, char* outfile = NULL, int letter_box = 0, int benchmark_layers = 0)
