@@ -10,6 +10,8 @@
 
 //"cfg/coco.data"
 
+#define GGLIBRARY_API extern "C" __declspec(dllexport)
+
 class ggNetInfo {
 public:
     network net;
@@ -44,7 +46,7 @@ public:
         free_network(net);
     }
 };
-ggNetInfo* ggCreateNetwork(char* datacfg = "cfg/coco.data", char* cfgfile = "cfg/yolov3.cfg", char* weightfile = "yolov3.weights",
+GGLIBRARY_API ggNetInfo* ggCreateNetwork(char* datacfg = "cfg/coco.data", char* cfgfile = "cfg/yolov3.cfg", char* weightfile = "yolov3.weights",
     int benchmark_layers = 0)
 {
     ggNetInfo* info = new ggNetInfo(datacfg, cfgfile, weightfile, benchmark_layers);
@@ -53,11 +55,11 @@ ggNetInfo* ggCreateNetwork(char* datacfg = "cfg/coco.data", char* cfgfile = "cfg
     return info;
 }
 
-void gFreeNetwork(ggNetInfo* net) {
+GGLIBRARY_API void gFreeNetwork(ggNetInfo* net) {
     delete net;
 }
 
-void gDetect(ggNetInfo* info, char* input, float thresh = 0.24, float hier_thresh = 0.5f, int letter_box = 0) {
+GGLIBRARY_API void gDetect(ggNetInfo* info, char* input, float thresh = 0.24, float hier_thresh = 0.5f, int letter_box = 0) {
     network net = info->net;
     float nms = .45;    // 0.4F
     image im = load_image(input, 0, 0, net.c);
