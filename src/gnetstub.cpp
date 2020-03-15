@@ -66,6 +66,7 @@ GGLIBRARY_API void gFreeNetwork(ggNetInfo* net) {
     delete net;
 }
 
+char* getDetectionJson(detection* dets, int num, float thresh, char** names, int classes);
 extern "C" image mat_to_image(cv::Mat mat);
 GGLIBRARY_API void gDetect(ggNetInfo* info, char* imageBuffer, int imgLength, void(*action)(char*), float thresh = 0.24, float hier_thresh = 0.5f, int letter_box = 0) {
     network net = info->net;
@@ -101,12 +102,92 @@ GGLIBRARY_API void gDetect(ggNetInfo* info, char* imageBuffer, int imgLength, vo
 
     //if (json_file) {
     long long json_image_id = 0;
-    char * json_buf = detection_to_json(dets, nboxes, l.classes, info->names, json_image_id, "");
+    char * json_buf = getDetectionJson(dets, nboxes, thresh, info->names, l.classes);
     action(json_buf);
     //fwrite(json_buf, sizeof(char), strlen(json_buf), json_file);
     free(json_buf);
     //}
 }
+
+extern "C" int compare_by_probs(const void* a_ptr, const void* b_ptr);
+char * getDetectionJson(detection* dets, int num, float thresh, char** names, int classes)
+{
+    int selected_detections_num;
+    detection_with_class* selected_detections = get_actual_detections(dets, num, thresh, &selected_detections_num, names);
+
+      
+
+    char* send_buf = (char*)calloc(1024, sizeof(char));
+    if (!send_buf) return NULL;
+    sprintf(send_buf, "[ \n");
+
+    const int BUFMAX = 4096;
+    char buf[BUFMAX];
+    char lblBuf[BUFMAX];
+    char probBuf[BUFMAX];
+    char tmpNumBuf[256];
+    qsort(selected_detections, selected_detections_num, sizeof(*selected_detections), compare_by_probs);
+    for (int i = 0; i < selected_detections_num; ++i) {
+        detection_with_class* detWithClass = selected_detections + i;
+        int bestClass = detWithClass->best_class;
+        detection* det = &detWithClass->det;
+        box b = det->bbox;
+
+        sprintf(buf, "  %s{\"class_id\":%d, \"name\":\"%s\", \"box\":{\"x\":%f, \"y\":%f, \"w\":%f, \"h\":%f}, \"confidence\":%f",
+            i == 0?"":",\n",
+            bestClass, names[bestClass], b.x, b.y, b.w, b.h, det->prob[bestClass]);
+
+        strcpy(lblBuf, ",\"labels\":[");
+        strcpy(probBuf, ",\"probs\":[");
+        int lblBufLen = strlen(lblBuf)+1;
+        int probBufLen = strlen(probBuf)+1;
+        bool hasLblProb = false;
+        for (int j = 0; j < classes; j++) {
+            float probj = det->prob[j];
+            if (probj > thresh && j != bestClass) {
+                char* name = names[bestClass];
+                int nameLen = strlen(name) + 3;
+                sprintf(tmpNumBuf, "%f", probj);
+                int probLen = strlen(tmpNumBuf) + 1;
+                lblBufLen += nameLen;
+                probBufLen += probLen;
+                if (lblBufLen < BUFMAX && probBufLen < BUFMAX) {
+                    if (hasLblProb) {
+                        strcat(lblBuf, ",");
+                        strcat(probBuf, ",");
+                    }
+                    strcat(lblBuf, "\"");
+                    strcat(lblBuf, name);
+                    strcat(lblBuf, "\"");
+                    strcat(probBuf, tmpNumBuf);
+                    hasLblProb = true;
+                }
+                else {
+                    break;
+                }                
+            }
+        }
+        strcat(lblBuf, "]");
+        strcat(probBuf, "]");
+        int send_buf_len = strlen(send_buf);
+        int buf_len = strlen(buf) + strlen(lblBuf)+ strlen(probBuf)+2;
+        int total_len = send_buf_len + buf_len + 100;
+        send_buf = (char*)realloc(send_buf, total_len * sizeof(char));
+        if (!send_buf) {
+            if (buf) free(buf);
+            return 0;// exit(-1);
+        }
+        strcat(send_buf, buf);
+        strcat(send_buf, lblBuf);
+        strcat(send_buf, probBuf);
+        strcat(send_buf, "}");
+    }
+    free(selected_detections);
+    
+    strcat(send_buf, "]");
+    return send_buf;
+}
+
 
 void test_detector1(char* datacfg = "cfg/coco.data", char* cfgfile = "cfg/yolov3.cfg", char* weightfile = "yolov3.weights", char* filename = NULL, float thresh = 0.24,
     float hier_thresh = 0.5f, int dont_show = 0, int ext_output = 0, int save_labels = 0, char* outfile = NULL, int letter_box = 0, int benchmark_layers = 0)
