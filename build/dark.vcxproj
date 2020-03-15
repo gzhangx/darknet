@@ -217,6 +217,13 @@
       <AdditionalOptions>-Wno-deprecated-gpu-targets</AdditionalOptions>
       <PerformDeviceLink>true</PerformDeviceLink>
     </CudaLink>
+    <CustomBuildStep>
+      <Command>
+      </Command>
+    </CustomBuildStep>
+    <PostBuildEvent>
+      <Command>copy $(TargetPath) C:\utils\dlls</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
     <ClCompile>
