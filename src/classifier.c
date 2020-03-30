@@ -27,7 +27,7 @@ float *get_regression_values(char **labels, int n)
     return v;
 }
 
-void train_classifier(char *datacfg, char *cfgfile, char *weightfile, int *gpus, int ngpus, int clear, int dontuse_opencv, int dont_show, int mjpeg_port, int calc_topk, int show_imgs)
+void train_classifier(char *datacfg, char *cfgfile, char *weightfile, int *gpus, int ngpus, int clear, int dontuse_opencv, int dont_show, int mjpeg_port, int calc_topk, int show_imgs, char* chart_path)
 {
     int i;
 
@@ -121,7 +121,7 @@ void train_classifier(char *datacfg, char *cfgfile, char *weightfile, int *gpus,
     int img_size = 1000;
     char windows_name[100];
     sprintf(windows_name, "average loss (id:%d)", random_gen());
-    if (!dontuse_opencv) img = draw_train_chart(windows_name, max_img_loss, net.max_batches, number_of_lines, img_size, dont_show);
+    if (!dontuse_opencv) img = draw_train_chart(windows_name, max_img_loss, net.max_batches, number_of_lines, img_size, dont_show, chart_path);
 #endif  //OPENCV
 
     data train;
@@ -134,6 +134,10 @@ void train_classifier(char *datacfg, char *cfgfile, char *weightfile, int *gpus,
     int iter_save_last = get_current_batch(net);
     int iter_topk = get_current_batch(net);
     float topk = 0;
+
+    int count = 0;
+    double start, time_remaining, avg_time = -1, alpha_time = 0.01;
+    start = what_time_is_it_now();
 
     while(get_current_batch(net) < net.max_batches || net.max_batches == 0){
         time=clock();
@@ -183,9 +187,14 @@ void train_classifier(char *datacfg, char *cfgfile, char *weightfile, int *gpus,
             draw_precision = 1;
         }
 
-        printf("%d, %.3f: %f, %f avg, %f rate, %lf seconds, %ld images\n", get_current_batch(net), (float)(*net.seen)/ train_images_num, loss, avg_loss, get_current_rate(net), sec(clock()-time), *net.seen);
+        time_remaining = (net.max_batches - i)*(what_time_is_it_now() - start) / 60 / 60;
+        // set initial value, even if resume training from 10000 iteration
+        if (avg_time < 0) avg_time = time_remaining;
+        else avg_time = alpha_time * time_remaining + (1 -  alpha_time) * avg_time;
+        start = what_time_is_it_now();
+        printf("%d, %.3f: %f, %f avg, %f rate, %lf seconds, %ld images, %f time left\n", get_current_batch(net), (float)(*net.seen)/ train_images_num, loss, avg_loss, get_current_rate(net), sec(clock()-time), *net.seen, avg_time);
 #ifdef OPENCV
-        if (!dontuse_opencv) draw_train_loss(windows_name, img, img_size, avg_loss, max_img_loss, i, net.max_batches, topk, draw_precision, topk_buff, dont_show, mjpeg_port);
+        if (!dontuse_opencv) draw_train_loss(windows_name, img, img_size, avg_loss, max_img_loss, i, net.max_batches, topk, draw_precision, topk_buff, dont_show, mjpeg_port, avg_time);
 #endif  // OPENCV
 
         if (i >= (iter_save + 1000)) {
@@ -1363,9 +1372,10 @@ void run_classifier(int argc, char **argv)
     char *filename = (argc > 6) ? argv[6]: 0;
     char *layer_s = (argc > 7) ? argv[7]: 0;
     int layer = layer_s ? atoi(layer_s) : -1;
+    char* chart_path = find_char_arg(argc, argv, "-chart", 0);
     if(0==strcmp(argv[2], "predict")) predict_classifier(data, cfg, weights, filename, top);
     else if(0==strcmp(argv[2], "try")) try_classifier(data, cfg, weights, filename, atoi(layer_s));
-    else if(0==strcmp(argv[2], "train")) train_classifier(data, cfg, weights, gpus, ngpus, clear, dontuse_opencv, dont_show, mjpeg_port, calc_topk, show_imgs);
+    else if(0==strcmp(argv[2], "train")) train_classifier(data, cfg, weights, gpus, ngpus, clear, dontuse_opencv, dont_show, mjpeg_port, calc_topk, show_imgs, chart_path);
     else if(0==strcmp(argv[2], "demo")) demo_classifier(data, cfg, weights, cam_index, filename, benchmark, benchmark_layers);
     else if(0==strcmp(argv[2], "gun")) gun_classifier(data, cfg, weights, cam_index, filename);
     else if(0==strcmp(argv[2], "threat")) threat_classifier(data, cfg, weights, cam_index, filename);

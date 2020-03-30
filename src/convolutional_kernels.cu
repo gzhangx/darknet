@@ -421,7 +421,7 @@ void forward_convolutional_layer_gpu(convolutional_layer l, network_state state)
     //if (state.use_mixed_precision) {
     int iteration_num = get_current_iteration(state.net); // (*state.net.seen) / (state.net.batch*state.net.subdivisions);
     if (state.index != 0 && state.net.cudnn_half && !l.xnor && (!state.train || iteration_num > 3 * state.net.burn_in) &&
-        (l.c / l.groups) % 8 == 0 && l.n % 8 == 0 && !state.train && l.groups <= 1 && l.size > 1)
+        (l.c / l.groups) % 8 == 0 && l.n % 8 == 0 && state.net.loss_scale != 1 && l.groups <= 1 && l.size > 1)
     {
         //printf("\n CUDNN_HALF!!! state.index = %d \n", state.index);
 
@@ -472,7 +472,7 @@ void forward_convolutional_layer_gpu(convolutional_layer l, network_state state)
 
         if (l.batch_normalize)
         {
-            if (state.train) // Training
+            if (state.train && !state.net.adversarial) // Training
             {
                 simple_copy_ongpu(l.outputs*l.batch / 2, output16, l.x_gpu);
                 //copy_ongpu(l.outputs*l.batch / 2, output16, 1, l.x_gpu, 1);
@@ -673,7 +673,7 @@ void backward_convolutional_layer_gpu(convolutional_layer l, network_state state
 //#ifdef CUDNN_HALF
     int iteration_num = get_current_iteration(state.net); //(*state.net.seen) / (state.net.batch*state.net.subdivisions);
     if (state.index != 0 && state.net.cudnn_half && !l.xnor && (!state.train || iteration_num > 3 * state.net.burn_in) &&
-        (l.c / l.groups) % 8 == 0 && l.n % 8 == 0 && !state.train && l.groups <= 1 && l.size > 1)
+        (l.c / l.groups) % 8 == 0 && l.n % 8 == 0 && state.net.loss_scale != 1 && l.groups <= 1 && l.size > 1)
     {
         const size_t input16_size = l.batch*l.c*l.w*l.h;
         const size_t delta16_size = l.batch*l.n*l.out_w*l.out_h;
@@ -744,21 +744,23 @@ void backward_convolutional_layer_gpu(convolutional_layer l, network_state state
         assert((l.nweights) > 0);
         cuda_convert_f32_to_f16(l.weight_updates_gpu, l.nweights, l.weight_updates_gpu16);
 
-        CHECK_CUDNN(cudnnConvolutionBackwardFilter(cudnn_handle(),
-            &one,
-            l.srcTensorDesc16,
-            input16, //state.input,
-            l.ddstTensorDesc16,
-            delta16, //l.delta_gpu,
-            l.convDesc,
-            l.bf_algo16,
-            state.workspace,
-            l.workspace_size,
-            &one,
-            l.dweightDesc16,
-            l.weight_updates_gpu16));    // l.weight_updates_gpu);
+        if (!state.net.adversarial) {
+            CHECK_CUDNN(cudnnConvolutionBackwardFilter(cudnn_handle(),
+                &one,
+                l.srcTensorDesc16,
+                input16, //state.input,
+                l.ddstTensorDesc16,
+                delta16, //l.delta_gpu,
+                l.convDesc,
+                l.bf_algo16,
+                state.workspace,
+                l.workspace_size,
+                &one,
+                l.dweightDesc16,
+                l.weight_updates_gpu16));    // l.weight_updates_gpu);
 
-        cuda_convert_f16_to_f32(l.weight_updates_gpu16, l.nweights, l.weight_updates_gpu);
+            cuda_convert_f16_to_f32(l.weight_updates_gpu16, l.nweights, l.weight_updates_gpu);
+        }
 
         if (state.delta) {
             if (l.binary || l.xnor) swap_binary(&l);
@@ -794,21 +796,23 @@ void backward_convolutional_layer_gpu(convolutional_layer l, network_state state
             backward_batchnorm_layer_gpu(l, state);
         }
 
-        // calculate conv weight updates
-        // if used: beta=1 then loss decreases faster
-        CHECK_CUDNN(cudnnConvolutionBackwardFilter(cudnn_handle(),
-            &one,
-            l.srcTensorDesc,
-            state.input,
-            l.ddstTensorDesc,
-            l.delta_gpu,
-            l.convDesc,
-            l.bf_algo,
-            state.workspace,
-            l.workspace_size,
-            &one,
-            l.dweightDesc,
-            l.weight_updates_gpu));
+        if (!state.net.adversarial) {
+            // calculate conv weight updates
+            // if used: beta=1 then loss decreases faster
+            CHECK_CUDNN(cudnnConvolutionBackwardFilter(cudnn_handle(),
+                &one,
+                l.srcTensorDesc,
+                state.input,
+                l.ddstTensorDesc,
+                l.delta_gpu,
+                l.convDesc,
+                l.bf_algo,
+                state.workspace,
+                l.workspace_size,
+                &one,
+                l.dweightDesc,
+                l.weight_updates_gpu));
+        }
 
         if (state.delta) {
             if (l.binary || l.xnor) swap_binary(&l);
@@ -1291,6 +1295,8 @@ void update_convolutional_layer_gpu(layer l, int batch, float learning_rate_init
         constrain_ongpu(l.nweights, l.clip, l.weights_gpu, 1);
     }
 }
+
+
 
 /*
 void update_convolutional_layer_gpu(convolutional_layer layer, int batch, float learning_rate, float momentum, float decay)
